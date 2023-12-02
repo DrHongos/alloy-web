@@ -1,25 +1,10 @@
-/*
-use ethers::{
-    providers::JsonRpcError,
-    types::{Address, Signature, SignatureError},
-    utils::{
-        hex::{decode, FromHexError},
-        serialize, ConversionError,
-    },
-}; */
-//use gloo_utils::format::JsValueSerdeExt;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
-//use alloy_primitives::Address;
-//use alloy_rpc_types::Signature;
-
-#[wasm_bindgen]
-extern "C" {
-
-    #[wasm_bindgen(js_namespace=["console"])]
-    pub fn log(value: &str);    
-}
+use hex::{FromHexError, decode};
+use alloy_primitives::Address;
+use alloy_rpc_types::Signature;
+use crate::helpers::serialize;
 
 #[wasm_bindgen]
 pub struct Eip1193Request {
@@ -82,9 +67,9 @@ pub enum Eip1193Error {
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
 
+    */
     #[error(transparent)]
     HexError(#[from] FromHexError),
- */
 }
 
 #[wasm_bindgen(inline_js = "export function get_provider_js() {return window.ethereum}")]
@@ -178,30 +163,30 @@ impl Eip1193 {
             Err(e) => Err(e.into()),
         }
     }
-/* 
+
     pub async fn sign_typed_data<T: Send + Sync + Serialize>(
         &self,
         data: T,
         from: &Address,
     ) -> Result<Signature, Eip1193Error> {
         let data = serialize(&data);
-        let from = serialize(from);
-
+        let from = serialize(&from.to_string());
+        
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
         let sig = sig.strip_prefix("0x").unwrap_or(&sig);
-
+        
         let sig = decode(sig)?;
-        Ok(Signature::try_from(sig.as_slice())?)
+        Ok(serde_json::from_slice(sig.as_slice()).expect("Could not parse Signature"))
     }
- */
+    
     pub fn is_available() -> bool {
         Ethereum::default().is_ok()
     }
-
+    
     pub fn new() -> Self {
         Eip1193 {}
     }
-
+    
     pub fn on(self, event: &str, callback: Box<dyn FnMut(JsValue)>) -> Result<(), Eip1193Error> {
         let ethereum = Ethereum::default()?;
         let closure = Closure::wrap(callback);

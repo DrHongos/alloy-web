@@ -1,14 +1,9 @@
 pub mod eip1193;
 pub mod walletconnect;
+pub mod helpers;
 
-use async_trait::async_trait;
+//use async_trait::async_trait;
 use eip1193::{Eip1193, Eip1193Error};
-/* use ethers::{
-    providers::{JsonRpcClient, JsonRpcError, ProviderError, RpcError},
-    types::{Address, Signature, SignatureError, U256},
-    utils::ConversionError,
-}; */
-//use gloo_utils::format::JsValueSerdeExt;
 use alloy_primitives::{Address, aliases::U256};
 use alloy_rpc_types::Signature;
 use hex::FromHexError;
@@ -26,7 +21,7 @@ use walletconnect_client::{
 
 //use log::debug;
 use walletconnect::WalletConnectProvider;
-use wasm_bindgen::{prelude::*, convert::WasmAbi};
+use wasm_bindgen::prelude::*;
 
 //use alloy_chains::Chain;
 
@@ -364,7 +359,7 @@ impl Ethereum {
 
         Ok(())
     }
-/* 
+
     pub async fn sign_typed_data<T: Send + Sync + Serialize>(
         &self,
         data: T,
@@ -378,7 +373,7 @@ impl Ethereum {
             }
         }
     }
- */
+
     async fn connect_wc(&mut self) -> Result<(), EthereumError> {
         if !self.walletconnect_available() {
             return Err(EthereumError::Unavailable);

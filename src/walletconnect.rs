@@ -1,21 +1,24 @@
-use ethers::{
-    providers::{Http, HttpClientError, JsonRpcClient},
-    types::{Address, Signature, SignatureError},
-    utils::{hex::decode, serialize},
-};
-use hex::FromHexError;
-use log::error;
+/* 
+WARNING WIP
+- killed provider property 
+
+*/
+
+use hex::{FromHexError, decode};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{from_value, json};
 use std::{
     cell::RefCell,
     fmt::{Debug, Formatter, Result as FmtResult},
-    str::FromStr,
+    //str::FromStr,
     sync::Arc,
 };
 use thiserror::Error;
 use unsafe_send_sync::UnsafeSendSync;
 use walletconnect_client::prelude::*;
+use alloy_primitives::Address;
+use alloy_rpc_types::Signature;
+use crate::helpers::serialize;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -27,13 +30,13 @@ pub enum Error {
 
     #[error(transparent)]
     WalletConnectError(#[from] WalletConnectError),
-
+/* 
     #[error(transparent)]
     HttpClientError(#[from] HttpClientError),
 
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
-
+ */
     #[error(transparent)]
     HexError(#[from] FromHexError),
 }
@@ -41,7 +44,7 @@ pub enum Error {
 #[derive(Clone)]
 pub struct WalletConnectProvider {
     client: UnsafeSendSync<Arc<RefCell<WalletConnect>>>,
-    provider: Option<UnsafeSendSync<RefCell<Http>>>,
+//    provider: Option<UnsafeSendSync<RefCell<Http>>>,
 }
 
 impl Debug for WalletConnectProvider {
@@ -57,7 +60,7 @@ impl Debug for WalletConnectProvider {
 
 impl WalletConnectProvider {
     pub fn new(client: WalletConnect, rpc_url: Option<String>) -> Self {
-        let provider = match rpc_url {
+/*         let provider = match rpc_url {
             Some(url) => {
                 if let Ok(p) = Http::from_str(&url) {
                     Some(UnsafeSendSync::new(RefCell::new(p)))
@@ -67,9 +70,10 @@ impl WalletConnectProvider {
             }
             _ => None,
         };
+        */
         Self {
             client: UnsafeSendSync::new(Arc::new(RefCell::new(client))),
-            provider,
+//            provider,
         }
     }
 
@@ -81,13 +85,19 @@ impl WalletConnectProvider {
         self.client.borrow_mut().chain_id()
     }
 
-    pub fn address(&self) -> ethers::types::Address {
-        self.client.borrow_mut().address()
+    pub fn address(&self) -> Address {
+        Address::from_slice(self.client.borrow_mut().address().as_bytes())
     }
 
-    pub fn accounts(&self) -> Option<Vec<ethers::types::Address>> {
+    pub fn accounts(&self) -> Option<Vec<Address>> {
         let chain_id = self.client.borrow().chain_id();
-        self.client.borrow_mut().get_accounts_for_chain_id(chain_id)
+        Some(self.client
+            .borrow_mut()
+            .get_accounts_for_chain_id(chain_id)
+            .unwrap()
+            .into_iter()
+            .map(|a| Address::from_slice(a.as_bytes()))
+            .collect())
     }
 
     /// Sends request via WalletConnectClient
@@ -106,11 +116,14 @@ impl WalletConnectProvider {
                 wc_client.request(method, Some(params), chain_id).await?,
             )?)
         } else {
+            Err(Error::MissingProvider)
+            /* 
             if let Some(provider) = &self.provider {
                 Ok((*provider.borrow_mut()).request(method, params).await?)
             } else {
                 Err(Error::MissingProvider)
             }
+ */
         }
     }
 
@@ -121,12 +134,12 @@ impl WalletConnectProvider {
         from: &Address,
     ) -> Result<Signature, Error> {
         let data = serialize(&data);
-        let from = serialize(from);
+        let from = serialize(&from.to_string());
 
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
         let sig = sig.strip_prefix("0x").unwrap_or(&sig);
 
         let sig = decode(sig)?;
-        Ok(Signature::try_from(sig.as_slice())?)
+        Ok(serde_json::from_slice(sig.as_slice())?)
     }
 }
