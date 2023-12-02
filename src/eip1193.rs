@@ -4,7 +4,7 @@ use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
 use hex::{FromHexError, decode};
 use alloy_primitives::Address;
 use alloy_rpc_types::Signature;
-use crate::helpers::serialize;
+use crate::helpers::{serialize, log};
 
 #[wasm_bindgen]
 pub struct Eip1193Request {
@@ -170,13 +170,19 @@ impl Eip1193 {
         from: &Address,
     ) -> Result<Signature, Eip1193Error> {
         let data = serialize(&data);
+        //log(format!("data is {:#?}", data).as_str());
         let from = serialize(&from.to_string());
-        
+
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
+        //log(format!("signed {:#?}", sig).as_str());
         let sig = sig.strip_prefix("0x").unwrap_or(&sig);
-        
+        //log(format!("sig2 {:#?}", sig).as_str());
         let sig = decode(sig)?;
-        Ok(serde_json::from_slice(sig.as_slice()).expect("Could not parse Signature"))
+        //log(format!("sig3 {:#?}", sig).as_str());
+        
+        // BUG in here: "expected value" 
+        let s = serde_json::from_slice(sig.as_slice()).expect("Could not parse Signature");
+        Ok(s)
     }
     
     pub fn is_available() -> bool {
