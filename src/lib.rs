@@ -3,17 +3,19 @@ pub mod walletconnect;
 
 use async_trait::async_trait;
 use eip1193::{Eip1193, Eip1193Error};
-use ethers::{
+/* use ethers::{
     providers::{JsonRpcClient, JsonRpcError, ProviderError, RpcError},
     types::{Address, Signature, SignatureError, U256},
     utils::ConversionError,
-};
-use gloo_utils::format::JsValueSerdeExt;
+}; */
+//use gloo_utils::format::JsValueSerdeExt;
+use alloy_primitives::{Address, aliases::U256};
+use alloy_rpc_types::Signature;
 use hex::FromHexError;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fmt::{Debug, Formatter, Result as FmtResult},
-    sync::Arc,
+    sync::Arc, str::FromStr,
 };
 use thiserror::Error;
 use unsafe_send_sync::UnsafeSendSync;
@@ -22,8 +24,17 @@ use walletconnect_client::{
     WalletConnect,
 };
 
-use log::debug;
+//use log::debug;
 use walletconnect::WalletConnectProvider;
+use wasm_bindgen::{prelude::*, convert::WasmAbi};
+
+//use alloy_chains::Chain;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace=["console"])]
+    pub fn log(m: &str);
+}
 
 pub struct EthereumBuilder {
     pub chain_id: u64,
@@ -112,7 +123,7 @@ pub enum EthereumError {
 
     #[error("Already connected")]
     AlreadyConnected,
-
+/* 
     #[error(transparent)]
     ConversionError(#[from] ConversionError),
 
@@ -121,7 +132,7 @@ pub enum EthereumError {
 
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
-
+ */
     #[error(transparent)]
     HexError(#[from] FromHexError),
 
@@ -134,7 +145,7 @@ pub enum EthereumError {
     #[error(transparent)]
     WalletConnectClientError(#[from] walletconnect_client::Error),
 }
-
+/* 
 impl From<EthereumError> for ProviderError {
     fn from(src: EthereumError) -> Self {
         ProviderError::JsonRpcClientError(Box::new(src))
@@ -158,7 +169,7 @@ impl RpcError for EthereumError {
         false
     }
 }
-
+ */
 #[derive(Clone)]
 pub enum WebProvider {
     None,
@@ -297,8 +308,8 @@ impl Ethereum {
         let injected = Eip1193::new();
         self.wallet = WebProvider::Injected(injected.clone());
 
-        self.accounts = Some(self.request_accounts().await?);
-        self.chain_id = Some(self.request_chain_id().await?.low_u64());
+        self.accounts = Some(self.request_accounts().await?.into_iter().map(|a| Address::from_str(&a).unwrap()).collect());
+        self.chain_id = Some(self.request_chain_id().await?.try_into().unwrap());
 
         {
             let mut this = self.clone();
@@ -314,9 +325,17 @@ impl Ethereum {
             let mut this = self.clone();
             _ = injected.clone().on(
                 "chainChanged",
-                Box::new(move |chain_id| {
-                    this.chain_id = chain_id.into_serde::<U256>().ok().map(|c| c.low_u64());
+                Box::new(move |chain_id| {    
+                    let chain_id_s: String = serde_wasm_bindgen::from_value(chain_id).unwrap();
+                    let c = u64::from_str_radix(
+                        &chain_id_s.trim_start_matches("0x"), 
+                        16
+                    ).unwrap();
+                    this.chain_id = Some(c);
                     this.emit_event(Event::ChainIdChanged(this.chain_id));
+                    
+                    //let c = Chain::from_id(c.try_into().unwrap());
+                    //log(format!("chain  {:#?}", c).as_str());
                 }),
             );
         }
@@ -325,8 +344,13 @@ impl Ethereum {
             _ = injected.clone().on(
                 "accountsChanged",
                 Box::new(move |accounts| {
-                    this.accounts = accounts.into_serde::<Vec<Address>>().ok();
-                    this.emit_event(Event::AccountsChanged(this.accounts.clone()));
+                    let accs: Vec<String> = serde_wasm_bindgen::from_value(accounts).unwrap();
+                    let accs_p: Vec<Address> = accs
+                        .into_iter()
+                        .map(|a: String| return Address::from_str(&a).unwrap_or(Address::ZERO))
+                        .collect();
+                    this.accounts = Some(accs_p.clone());
+                    this.emit_event(Event::AccountsChanged(Some(accs_p)));
                 }),
             );
         }
@@ -340,7 +364,7 @@ impl Ethereum {
 
         Ok(())
     }
-
+/* 
     pub async fn sign_typed_data<T: Send + Sync + Serialize>(
         &self,
         data: T,
@@ -354,7 +378,7 @@ impl Ethereum {
             }
         }
     }
-
+ */
     async fn connect_wc(&mut self) -> Result<(), EthereumError> {
         if !self.walletconnect_available() {
             return Err(EthereumError::Unavailable);
@@ -372,7 +396,8 @@ impl Ethereum {
                     this.emit_event(Event::ChainIdChanged(Some(chain_id)))
                 }
                 WCEvent::AccountsChanged(accounts) => {
-                    this.emit_event(Event::AccountsChanged(Some(accounts)))
+                    let accounts_parsed = accounts.into_iter().map(|a| return Address::from_slice(a.as_bytes())).collect();
+                    this.emit_event(Event::AccountsChanged(Some(accounts_parsed)))
                 }
             })),
         )?;
@@ -387,12 +412,19 @@ impl Ethereum {
         Ok(())
     }
 
-    async fn request_accounts(&self) -> Result<Vec<Address>, EthereumError> {
+    async fn request_accounts(&self) -> Result<Vec<String>, EthereumError> {
         match &self.wallet {
             WebProvider::None => Err(EthereumError::NotConnected),
-            WebProvider::Injected(_) => Ok(self.request("eth_requestAccounts", ()).await?),
+            WebProvider::Injected(_) => Ok(self.clone().request("eth_requestAccounts", ()).await?),
             WebProvider::WalletConnect(wc) => match wc.accounts() {
-                Some(a) => Ok(a),
+                Some(accounts) => {
+                    let accounts_parsed = accounts
+                        .into_iter()
+                        .map(|a| a.to_string())
+                        //.map(|a| return Address::from_slice(a.as_bytes()))
+                        .collect();               
+                    Ok(accounts_parsed)
+                },
                 None => Err(EthereumError::Unavailable),
             },
         }
@@ -401,8 +433,8 @@ impl Ethereum {
     async fn request_chain_id(&self) -> Result<U256, EthereumError> {
         match &self.wallet {
             WebProvider::None => Err(EthereumError::NotConnected),
-            WebProvider::Injected(_) => Ok(self.request("eth_chainId", ()).await?),
-            WebProvider::WalletConnect(wc) => Ok(wc.chain_id().into()),
+            WebProvider::Injected(_) => Ok(self.clone().request("eth_chainId", ()).await?),
+            WebProvider::WalletConnect(wc) => Ok(wc.chain_id().try_into().unwrap()),
         }
     }
 
@@ -413,6 +445,25 @@ impl Ethereum {
     }
 }
 
+
+//#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+//#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl Ethereum {
+    //type Error = EthereumError; 
+    async fn request<T: Serialize + Send + Sync, R: DeserializeOwned + Send>(
+        &self,
+        method: &str,
+        params: T,
+    ) -> Result<R, EthereumError> {
+        match &self.wallet {
+            WebProvider::None => Err(EthereumError::NotConnected),
+            WebProvider::Injected(provider) => Ok(provider.request(method, params).await?),
+            WebProvider::WalletConnect(provider) => Ok(provider.request(method, params).await?),
+        }
+    }
+}
+
+/* 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl JsonRpcClient for Ethereum {
@@ -430,3 +481,4 @@ impl JsonRpcClient for Ethereum {
         }
     }
 }
+*/

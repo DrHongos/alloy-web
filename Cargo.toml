@@ -31,3 +31,5 @@ derive_more = "0.99"
 futures = "0.3.28"
 qrcode-generator = "4.1.9"
 unsafe-send-sync = "0.1.0"
+alloy-primitives = "0.5.2"
+alloy-rpc-types = { path = "../alloy/crates/rpc-types" }

@@ -6,10 +6,17 @@ use ethers::{
         serialize, ConversionError,
     },
 };
-use gloo_utils::format::JsValueSerdeExt;
+//use gloo_utils::format::JsValueSerdeExt;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
+
+#[wasm_bindgen]
+extern "C" {
+
+    #[wasm_bindgen(js_namespace=["console"])]
+    pub fn log(value: &str);    
+}
 
 #[wasm_bindgen]
 pub struct Eip1193Request {
@@ -122,11 +129,11 @@ impl Eip1193 {
         params: T,
     ) -> Result<R, Eip1193Error> {
         let ethereum = Ethereum::default()?;
-        let t_params = JsValue::from_serde(&params)?;
+        let t_params = serde_wasm_bindgen::to_value(&params).unwrap();
         let typename_object = JsValue::from_str("type");
-
-        let parsed_params = if !t_params.is_null() {
-            js_sys::Array::from(&t_params).map(&mut |val, _, _| {
+        //log(format!("params is {:#?}", t_params).as_str());
+        let parsed_params = if !t_params.is_null() & !t_params.is_undefined() {
+            js_sys::Array::from(&t_params).map(&mut |val, _, _| {   // error undefined is not iterable
                 if let Some(trans) = js_sys::Object::try_from(&val) {
                     if let Ok(obj_type) = js_sys::Reflect::get(trans, &typename_object) {
                         if let Some(type_string) = obj_type.as_string() {
@@ -163,7 +170,7 @@ impl Eip1193 {
         let payload = Eip1193Request::new(method.to_string(), parsed_params.into());
 
         match ethereum.request(payload).await {
-            Ok(r) => Ok(r.into_serde().unwrap()),
+            Ok(r) => Ok(serde_wasm_bindgen::from_value(r).unwrap()),
             Err(e) => Err(e.into()),
         }
     }
