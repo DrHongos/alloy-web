@@ -1,3 +1,4 @@
+/*
 use ethers::{
     providers::JsonRpcError,
     types::{Address, Signature, SignatureError},
@@ -5,11 +6,13 @@ use ethers::{
         hex::{decode, FromHexError},
         serialize, ConversionError,
     },
-};
+}; */
 //use gloo_utils::format::JsValueSerdeExt;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
+//use alloy_primitives::Address;
+//use alloy_rpc_types::Signature;
 
 #[wasm_bindgen]
 extern "C" {
@@ -64,15 +67,15 @@ pub enum Eip1193Error {
 
     #[error("Not implemented yet")]
     Unimplemented,
-
+/* 
     #[error(transparent)]
     /// Thrown if the response could not be parsed
     JsonRpcError(#[from] JsonRpcError),
-
+ */
     #[error(transparent)]
     /// Serde JSON Error
     SerdeJson(#[from] serde_json::Error),
-
+/* 
     #[error(transparent)]
     ConversionError(#[from] ConversionError),
 
@@ -81,6 +84,7 @@ pub enum Eip1193Error {
 
     #[error(transparent)]
     HexError(#[from] FromHexError),
+ */
 }
 
 #[wasm_bindgen(inline_js = "export function get_provider_js() {return window.ethereum}")]
@@ -174,7 +178,7 @@ impl Eip1193 {
             Err(e) => Err(e.into()),
         }
     }
-
+/* 
     pub async fn sign_typed_data<T: Send + Sync + Serialize>(
         &self,
         data: T,
@@ -189,7 +193,7 @@ impl Eip1193 {
         let sig = decode(sig)?;
         Ok(Signature::try_from(sig.as_slice())?)
     }
-
+ */
     pub fn is_available() -> bool {
         Ethereum::default().is_ok()
     }
