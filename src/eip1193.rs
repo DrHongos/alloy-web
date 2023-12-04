@@ -177,8 +177,10 @@ impl Eip1193 {
         error: "expected value in line 1 column 1" in serde_json::from_slice()
     https://docs.metamask.io/wallet/reference/eth_signtypeddata_v4/
         Test:
-            - formatting data with chainId: 1 (instead of 0x1 sended)
-            - see how its serialized TypedData
+        - Signature parsing (json_serde::from_slice -> Signature::from.. why doesn't exists?)
+        
+        'ed:
+        - formatting data with chainId: 1 (instead of 0x1 sended)   -> Nope! original sending 0x1 works fine
 
 
 */
@@ -190,8 +192,12 @@ impl Eip1193 {
         //log(format!("test {:#?}", sig.clone()).as_str());    // there's an error here
         //log(format!("sig3 {:#?}", sig).as_str());
         let slice = sig.as_slice();
+
+        // how to create Signature from this? 
         //log(format!("slice {:#?}", slice.clone()).as_str()); 
         // BUG in here: "expected value" parsing signature directly 
+        let r = Signature::try_from(slice).expect("Could not parse Signature");        
+/*         
         let s: PreSignature = serde_json::from_slice(slice).expect("Could not parse Signature");
         let r = Signature {
             r: s.r,
@@ -199,6 +205,9 @@ impl Eip1193 {
             v: U256::from(s.v), //???
             y_parity: None
         };
+ */
+
+
         Ok(r)
     }
     
