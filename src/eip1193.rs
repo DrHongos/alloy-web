@@ -196,8 +196,9 @@ impl Eip1193 {
         // how to create Signature from this? 
         //log(format!("slice {:#?}", slice.clone()).as_str()); 
         // BUG in here: "expected value" parsing signature directly 
-        let r = Signature::try_from(slice).expect("Could not parse Signature");        
-/*         
+
+//        let r = Signature::try_from(slice).expect("Could not parse Signature");        
+        
         let s: PreSignature = serde_json::from_slice(slice).expect("Could not parse Signature");
         let r = Signature {
             r: s.r,
@@ -205,7 +206,7 @@ impl Eip1193 {
             v: U256::from(s.v), //???
             y_parity: None
         };
- */
+
 
 
         Ok(r)
