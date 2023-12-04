@@ -1,8 +1,8 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Serialize, Deserialize};
 use thiserror::Error;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
 use hex::{FromHexError, decode};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, aliases::U256};
 use alloy_rpc_types::Signature;
 use crate::helpers::{serialize, log};
 
@@ -170,19 +170,36 @@ impl Eip1193 {
         from: &Address,
     ) -> Result<Signature, Eip1193Error> {
         let data = serialize(&data);
-        //log(format!("data is {:#?}", data).as_str());
+        log(format!("data is {:#?}", data).as_str());
+        // modify data to change chain_id=0xnumber to number 
         let from = serialize(&from.to_string());
+/* 
+        error: "expected value in line 1 column 1" in serde_json::from_slice()
+    https://docs.metamask.io/wallet/reference/eth_signtypeddata_v4/
+        Test:
+            - formatting data with chainId: 1 (instead of 0x1 sended)
+            - see how its serialized TypedData
 
+
+*/
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
         //log(format!("signed {:#?}", sig).as_str());
         let sig = sig.strip_prefix("0x").unwrap_or(&sig);
         //log(format!("sig2 {:#?}", sig).as_str());
         let sig = decode(sig)?;
+        //log(format!("test {:#?}", sig.clone()).as_str());    // there's an error here
         //log(format!("sig3 {:#?}", sig).as_str());
-        
-        // BUG in here: "expected value" 
-        let s = serde_json::from_slice(sig.as_slice()).expect("Could not parse Signature");
-        Ok(s)
+        let slice = sig.as_slice();
+        //log(format!("slice {:#?}", slice.clone()).as_str()); 
+        // BUG in here: "expected value" parsing signature directly 
+        let s: PreSignature = serde_json::from_slice(slice).expect("Could not parse Signature");
+        let r = Signature {
+            r: s.r,
+            s: s.s,
+            v: U256::from(s.v), //???
+            y_parity: None
+        };
+        Ok(r)
     }
     
     pub fn is_available() -> bool {
@@ -200,4 +217,15 @@ impl Eip1193 {
         closure.forget();
         Ok(())
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Copy, Hash)]
+/// An ECDSA signature
+pub struct PreSignature {
+    /// R value
+    pub r: U256,
+    /// S Value
+    pub s: U256,
+    /// V value
+    pub v: u64,
 }
