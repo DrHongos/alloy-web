@@ -1,25 +1,9 @@
-## Quickstart
+Forked from `ethers-web`
 
-Add this to your Cargo.toml:
+Currently working on typedMessages signing
+Provider traits cancelled (TODO: adapt to alloy's)
 
-```toml
-[dependencies]
-ethers-web = "0.1"
-```
-
-...and check `examples` folder for more tricks.
-You use `ethers-web` to connect providers and then use bare `ethers` to interact with the blockchain.
-
-## Documentation
-
-In progress of creation.
-
-## Features
-
-- [X] EIP1193 injected wallet implementation
-- [X] WalletConnect
-- [ ] Documentation
-- [ ] Better examples (plus leptos example)
+There is an example of usage using Yew in https://github.com/DrHongos/yew-alloy
 
 ## Note on WASM
 
