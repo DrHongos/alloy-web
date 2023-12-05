@@ -364,12 +364,12 @@ impl Ethereum {
         &self,
         data: T,
         from: &Address,
-    ) -> Result<Signature, EthereumError> {
+    ) -> Result<String, EthereumError> {    // <Signature, _>
         match &self.wallet {
             WebProvider::None => Err(EthereumError::NotConnected),
             WebProvider::Injected(provider) => Ok(provider.sign_typed_data(data, from).await?),
             WebProvider::WalletConnect(provider) => {
-                Ok(provider.sign_typed_data(data, from).await?)
+                Ok(format!("{:#?}",provider.sign_typed_data(data, from).await?))
             }
         }
     }

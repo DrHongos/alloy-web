@@ -168,7 +168,7 @@ impl Eip1193 {
         &self,
         data: T,
         from: &Address,
-    ) -> Result<Signature, Eip1193Error> {
+    ) -> Result<String, Eip1193Error> {     // <Signature, _>
         let data = serialize(&data);
         log(format!("data is {:#?}", data).as_str());
         // modify data to change chain_id=0xnumber to number 
@@ -184,32 +184,23 @@ impl Eip1193 {
 
 
 */
+
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
         //log(format!("signed {:#?}", sig).as_str());
         let sig = sig.strip_prefix("0x").unwrap_or(&sig);
         //log(format!("sig2 {:#?}", sig).as_str());
-        let sig = decode(sig)?;
+        //let sig = decode(sig)?;
         //log(format!("test {:#?}", sig.clone()).as_str());    // there's an error here
         //log(format!("sig3 {:#?}", sig).as_str());
-        let slice = sig.as_slice();
-
-        // how to create Signature from this? 
+        //let _slice = sig.as_slice();
+    
+        // how to create Signature from this? and also.. why? 
         //log(format!("slice {:#?}", slice.clone()).as_str()); 
         // BUG in here: "expected value" parsing signature directly 
 
 //        let r = Signature::try_from(slice).expect("Could not parse Signature");        
-        
-        let s: PreSignature = serde_json::from_slice(slice).expect("Could not parse Signature");
-        let r = Signature {
-            r: s.r,
-            s: s.s,
-            v: U256::from(s.v), //???
-            y_parity: None
-        };
 
-
-
-        Ok(r)
+        Ok(sig.into())
     }
     
     pub fn is_available() -> bool {
@@ -227,15 +218,4 @@ impl Eip1193 {
         closure.forget();
         Ok(())
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Copy, Hash)]
-/// An ECDSA signature
-pub struct PreSignature {
-    /// R value
-    pub r: U256,
-    /// S Value
-    pub s: U256,
-    /// V value
-    pub v: u64,
 }
