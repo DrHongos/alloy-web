@@ -1,10 +1,10 @@
-use serde::{de::DeserializeOwned, Serialize, Deserialize};
+use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
-use hex::{FromHexError, decode};
-use alloy_primitives::{Address, aliases::U256};
-use alloy_rpc_types::Signature;
-use crate::helpers::{serialize, log};
+use hex::FromHexError;
+use alloy_primitives::Address;
+use crate::helpers::serialize;
+//use alloy_rpc_types::Signature;
 
 #[wasm_bindgen]
 pub struct Eip1193Request {
@@ -168,39 +168,12 @@ impl Eip1193 {
         &self,
         data: T,
         from: &Address,
-    ) -> Result<String, Eip1193Error> {     // <Signature, _>
+    ) -> Result<String, Eip1193Error> {
         let data = serialize(&data);
-        log(format!("data is {:#?}", data).as_str());
-        // modify data to change chain_id=0xnumber to number 
         let from = serialize(&from.to_string());
-/* 
-        error: "expected value in line 1 column 1" in serde_json::from_slice()
-    https://docs.metamask.io/wallet/reference/eth_signtypeddata_v4/
-        Test:
-        - Signature parsing (json_serde::from_slice -> Signature::from.. why doesn't exists?)
-        
-        'ed:
-        - formatting data with chainId: 1 (instead of 0x1 sended)   -> Nope! original sending 0x1 works fine
-
-
-*/
 
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
-        //log(format!("signed {:#?}", sig).as_str());
-        let sig = sig.strip_prefix("0x").unwrap_or(&sig);
-        //log(format!("sig2 {:#?}", sig).as_str());
-        //let sig = decode(sig)?;
-        //log(format!("test {:#?}", sig.clone()).as_str());    // there's an error here
-        //log(format!("sig3 {:#?}", sig).as_str());
-        //let _slice = sig.as_slice();
-    
-        // how to create Signature from this? and also.. why? 
-        //log(format!("slice {:#?}", slice.clone()).as_str()); 
-        // BUG in here: "expected value" parsing signature directly 
-
-//        let r = Signature::try_from(slice).expect("Could not parse Signature");        
-
-        Ok(sig.into())
+        Ok(sig)
     }
     
     pub fn is_available() -> bool {

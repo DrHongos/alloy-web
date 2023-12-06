@@ -17,8 +17,8 @@ use thiserror::Error;
 use unsafe_send_sync::UnsafeSendSync;
 use walletconnect_client::prelude::*;
 use alloy_primitives::Address;
-use alloy_rpc_types::Signature;
 use crate::helpers::serialize;
+//use alloy_rpc_types::Signature;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -132,7 +132,7 @@ impl WalletConnectProvider {
         &self,
         data: T,
         from: &Address,
-    ) -> Result<Signature, Error> {
+    ) -> Result<String, Error> {
         let data = serialize(&data);
         let from = serialize(&from.to_string());
 
