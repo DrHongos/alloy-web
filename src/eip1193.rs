@@ -1,8 +1,6 @@
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::value::RawValue;
 use thiserror::Error;
-use unsafe_send_sync::UnsafeSendSync;
-use walletconnect_client::rpc::payload;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
 use hex::FromHexError;
 use alloy_primitives::Address;
@@ -11,12 +9,11 @@ use crate::{
         WebClient, 
     //    EthereumError
 };
-use std::sync::Arc;
+use std::pin::Pin;
 
-
-use alloy_json_rpc::{RpcError, ResponsePayload, SerializedRequest, Id, RequestPacket};
-use alloy_json_rpc::{ResponsePacket, Response};
-use futures::{Future, TryFutureExt};
+use alloy_json_rpc::{ResponsePayload, RequestPacket, RpcError, Response, SerializedRequest};
+use alloy_json_rpc::ResponsePacket;
+use futures::{Future, future::{try_join_all, TryJoinAll}};
 use async_trait::async_trait;
 
 /* use alloy_rpc_types::TransactionKind;
@@ -33,7 +30,6 @@ use std::sync::{Arc, Mutex};
 use alloy_primitives::U256;
 use futures::future::try_join_all;
 use serde_json::value::RawValue;
-use std::{future::Future, pin::Pin};
 use tokio::sync::{broadcast, mpsc::{self, UnboundedSender}, oneshot};
  */
 #[wasm_bindgen]
@@ -65,9 +61,7 @@ impl Eip1193Request {
 // But wasm itself is a single threaded... something.
 // To avoid problems with Send and Sync, all these parameters are
 // fetched whenever it is needed
-pub struct Eip1193 {
-    client: UnsafeSendSync<Arc<Ethereum>>
-}
+pub struct Eip1193 {/* client: UnsafeSendSync<Arc<Ethereum>> */}
 
 // what if i can't.. so i add
 // client: UnsafeSendSync<Arc<RefCell<Ethereum>>>
@@ -146,63 +140,6 @@ impl From<JsValue> for Eip1193Error {
     }
 }
 
-#[async_trait(?Send)]
-impl WebClient for Eip1193 {
-    // this is working but needs to capture all responses in Box<RawValue> or something closer to alloy_json_rpc::ResponsePacket
-    // later should also move req from SerializedRequest to RequestPacket
-    async fn nrequest(
-        &self,
-        req: alloy_json_rpc::SerializedRequest,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<alloy_json_rpc::Response, alloy_json_rpc::RpcError<alloy_transport::TransportErrorKind>>> + Send + 'static>> {
-
-        log(format!("Received {:#?}", req).as_str());
-        // create a one-shot channel to "fake" the js Promise
-        let (tx, rx) = futures::channel::oneshot::channel::<Result<alloy_json_rpc::Response, TransportErrorKind>>();
-        Box::pin(async move {
-            wasm_bindgen_futures::spawn_local(async move {
-                let method = req.method().to_string();
-                let ethereum = Ethereum::default().unwrap();
-                let params = serde_wasm_bindgen::to_value(req.params().expect("No params")).unwrap();
-                let payload = Eip1193Request::new(method, params);
-                let resu = ethereum.request(payload).await;//.unwrap();
-                //log(format!("is {:#?}", resu).as_str());
-                let res = alloy_json_rpc::Response {
-                    id: req.id().clone(),
-                    payload: match resu {
-                        Ok(s) => {
-                            // https://docs.rs/wasm-bindgen/latest/wasm_bindgen/struct.JsValue.html
-                            // need to parse between JsValue & RawValue or something like it
-/* 
-                            this needs to be open to all kind of request responses...
-
-*/                            
-                            // requestAccounts -> Vec<String>
-                            // chainId -> String
-                            // ...
-                            let b: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
-
-
-                            let r = serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
-                            ResponsePayload::Success(r.to_owned())
-                        },
-                        Err(e) => {
-                            let b: String = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
-                            let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
-                            let f = alloy_json_rpc::ErrorPayload { code: 666, message: "idk".to_string(), data: Some(r.to_owned()) };
-                            ResponsePayload::Failure(f)
-                        }
-                    }
-                };
-                //log(format!("parsed {:#?}", res).as_str());
-                tx.send(Ok(res)).unwrap()
-            });
-            // or maybe spawn in here?
-            //tx.send(ix).map_err(|_| TransportErrorKind::backend_gone())?;
-            let d = rx.await.map_err(|_| TransportErrorKind::backend_gone())?;
-            d.map_err(|_| TransportErrorKind::backend_gone())
-        })        
-    }
-}
 
 
 impl Eip1193 {
@@ -276,7 +213,7 @@ impl Eip1193 {
     
     pub fn new() -> Self {
         Eip1193 {
-            client: UnsafeSendSync::new(Arc::new(Ethereum::default().expect("No window.ethereum")))
+/*             client: UnsafeSendSync::new(Arc::new(Ethereum::default().expect("No window.ethereum"))) */
         }
     }
     
@@ -289,6 +226,85 @@ impl Eip1193 {
     }
     
 }
+
+#[async_trait(?Send)]
+impl WebClient for Eip1193 {
+    // this is working but needs to capture all responses in Box<RawValue> or something closer to alloy_json_rpc::ResponsePacket
+    // later should also move req from SerializedRequest to RequestPacket
+    async fn send(
+        &self,
+        req: SerializedRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send/*  + 'static */>> {
+        log(format!("Received {:#?}", req).as_str());
+        // create a one-shot channel to "fake" the js Promise
+        let (tx, rx) = futures::channel::oneshot::channel::<Result<alloy_json_rpc::Response, TransportErrorKind>>();
+        Box::pin(async move {
+            wasm_bindgen_futures::spawn_local(async move {
+                let method = req.method().to_string();
+                let ethereum = Ethereum::default().unwrap();
+                let params = serde_wasm_bindgen::to_value(req.params().expect("No params")).unwrap();
+                let payload = Eip1193Request::new(method, params);
+                let resu = ethereum.request(payload).await;//.unwrap();
+                //log(format!("is {:#?}", resu).as_str());
+                let res = alloy_json_rpc::Response {
+                    id: req.id().clone(),
+                    payload: match resu {
+                        Ok(s) => {
+                            // https://docs.rs/wasm-bindgen/latest/wasm_bindgen/struct.JsValue.html
+                            // need to parse between JsValue & RawValue or something like it
+    /* 
+                            this needs to be open to all kind of request responses...
+    
+    */                            
+                            // requestAccounts -> Vec<String>
+                            // chainId -> String
+                            // ...
+                            let b: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
+    
+    
+                            let r = serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
+                            ResponsePayload::Success(r.to_owned())
+                        },
+                        Err(e) => {
+                            let b: String = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
+                            let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
+                            let f = alloy_json_rpc::ErrorPayload { code: 666, message: "idk".to_string(), data: Some(r.to_owned()) };
+                            ResponsePayload::Failure(f)
+                        }
+                    }
+                };
+                //log(format!("parsed {:#?}", res).as_str());
+                tx.send(Ok(res)).unwrap()
+            });
+            // and wait for the response
+            let d = rx.await.map_err(|_| TransportErrorKind::backend_gone())?;
+            d.map_err(|_| TransportErrorKind::backend_gone())
+        })        
+    }
+
+    async fn send_packet(&self, req: RequestPacket) -> Pin<Box<dyn Future<Output = Result<ResponsePacket, TransportError>> + Send>> {
+        match req {
+            RequestPacket::Single(req) => {
+                let fut: Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send>> = self.send(req).await;
+                Box::pin(async move {
+                    match fut.await {
+                        Ok(d) => Ok(ResponsePacket::Single(d.into())),
+                        Err(e) => Err(e)
+                    }
+                })
+            }
+            RequestPacket::Batch(reqs) => {
+                panic!("unavailable")
+                //let futs = try_join_all(
+                //    reqs.into_iter().map(|req| self.send(req))
+                //);
+                //Box::pin(futs.into())
+            }
+        }
+    } 
+
+}
+
 /* 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

@@ -2,7 +2,6 @@ pub mod eip1193;
 pub mod walletconnect;
 pub mod helpers;
 
-//use alloy_json_rpc::RpcError;
 use eip1193::{Eip1193, Eip1193Error/* , Eip1193Request */};
 use alloy_primitives::{Address, aliases::U256};
 use hex::FromHexError;
@@ -21,10 +20,11 @@ use walletconnect_client::{
 use walletconnect::WalletConnectProvider;
 use wasm_bindgen::prelude::*;
 
-use alloy_json_rpc::{SerializedRequest, Response};
+use alloy_json_rpc::{SerializedRequest, Response, RequestPacket, ResponsePacket};
 use async_trait::async_trait;
 use futures::Future;
-use alloy_transport::{TransportError, TransportErrorKind, TransportFut}; 
+use alloy_transport::{TransportError, TransportErrorKind}; 
+use std::pin::Pin;
 
 
 #[wasm_bindgen]
@@ -469,19 +469,26 @@ i think the solution could be with a series of channels (see ws::wasm in alloy)
 //#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[async_trait(?Send)]
 pub trait WebClient {
-    async fn nrequest(&self, req: SerializedRequest) -> std::pin::Pin<Box<dyn Future<Output = Result<Response, alloy_json_rpc::RpcError<TransportErrorKind>>> + Send + 'static>>;
-//    async fn make_request(&self, payload: Eip1193Request) -> Result<String, RpcError<TransportErrorKind>>;
+    async fn send(&self, req: SerializedRequest) -> Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send/*  + 'static */>>;
+    async fn send_packet(&self, req: RequestPacket) -> Pin<Box<dyn Future<Output = Result<ResponsePacket, TransportError>> + Send>> ;
 }
 #[async_trait(?Send)]
 impl WebClient for Ethereum {
-    async fn nrequest(
+    async fn send(
         &self,
         req: SerializedRequest,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<Response, alloy_json_rpc::RpcError<TransportErrorKind>>> + Send + 'static>> {
         match &self.wallet {
             WebProvider::None => panic!("Unavailable"),//Err(EthereumError::NotConnected),
-            WebProvider::Injected(provider) => provider.nrequest(req).await,
+            WebProvider::Injected(provider) => provider.send(req).await,
             WebProvider::WalletConnect(_provider) => panic!("Unavailable")//Err(EthereumError::Unavailable)//Ok(provider.request(req).await?),
+        }
+    }
+    async fn send_packet(&self, req: RequestPacket) -> Pin<Box<dyn Future<Output = Result<ResponsePacket, TransportError>> + Send>> {
+        match &self.wallet {
+            WebProvider::None => panic!("Unavailable"),
+            WebProvider::Injected(provider) => provider.send_packet(req).await,
+            WebProvider::WalletConnect(_provider) => panic!("Unavailable")
         }
     }
 }  
