@@ -11,19 +11,14 @@ use crate::{
 };
 use std::pin::Pin;
 
-use alloy_json_rpc::{ResponsePayload, RequestPacket, RpcError, Response, SerializedRequest};
+use alloy_json_rpc::{ResponsePayload, RequestPacket, Response, SerializedRequest};
 use alloy_json_rpc::ResponsePacket;
 use futures::{Future, future::{try_join_all, TryJoinAll}};
 use async_trait::async_trait;
 
-/* use alloy_rpc_types::TransactionKind;
-use serde_json::value::RawValue;
-use wasm_bindgen_futures::JsFuture; */
+//use serde_json::value::RawValue;
 
-// test
-/*
 use wasm_bindgen_futures::spawn_local;
-*/
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
 /* 
 use std::sync::{Arc, Mutex};
@@ -230,62 +225,63 @@ impl Eip1193 {
 #[async_trait(?Send)]
 impl WebClient for Eip1193 {
     // this is working but needs to capture all responses in Box<RawValue> or something closer to alloy_json_rpc::ResponsePacket
-    // later should also move req from SerializedRequest to RequestPacket
-    async fn send(
+    fn send(
         &self,
         req: SerializedRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send/*  + 'static */>> {
-        log(format!("Received {:#?}", req).as_str());
+    ) -> Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send + 'static>> {
         // create a one-shot channel to "fake" the js Promise
         let (tx, rx) = futures::channel::oneshot::channel::<Result<alloy_json_rpc::Response, TransportErrorKind>>();
-        Box::pin(async move {
-            wasm_bindgen_futures::spawn_local(async move {
-                let method = req.method().to_string();
-                let ethereum = Ethereum::default().unwrap();
-                let params = serde_wasm_bindgen::to_value(req.params().expect("No params")).unwrap();
-                let payload = Eip1193Request::new(method, params);
-                let resu = ethereum.request(payload).await;//.unwrap();
-                //log(format!("is {:#?}", resu).as_str());
-                let res = alloy_json_rpc::Response {
-                    id: req.id().clone(),
-                    payload: match resu {
-                        Ok(s) => {
-                            // https://docs.rs/wasm-bindgen/latest/wasm_bindgen/struct.JsValue.html
-                            // need to parse between JsValue & RawValue or something like it
-    /* 
-                            this needs to be open to all kind of request responses...
-    
-    */                            
-                            // requestAccounts -> Vec<String>
-                            // chainId -> String
-                            // ...
-                            let b: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
-    
-    
-                            let r = serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
-                            ResponsePayload::Success(r.to_owned())
-                        },
-                        Err(e) => {
-                            let b: String = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
-                            let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
-                            let f = alloy_json_rpc::ErrorPayload { code: 666, message: "idk".to_string(), data: Some(r.to_owned()) };
-                            ResponsePayload::Failure(f)
-                        }
+        // launch a thread to send the request
+        spawn_local(async move {
+            let method = req.method().to_string();
+            let ethereum = Ethereum::default().unwrap();
+            let params = serde_wasm_bindgen::to_value(req.params().expect("No params")).unwrap();
+            let payload = Eip1193Request::new(method, params);
+            let resu = ethereum.request(payload).await;//.unwrap();
+            //log(format!("is {:#?}", resu).as_str());
+            let res = alloy_json_rpc::Response {
+                id: req.id().clone(),
+                payload: match resu {
+                    Ok(s) => {
+                        // https://docs.rs/wasm-bindgen/latest/wasm_bindgen/struct.JsValue.html
+                        // need to parse between JsValue & RawValue or something like it
+/* 
+                        this needs to be open to all kind of request responses...
+
+*/                            
+                        // requestAccounts -> Vec<String>
+                        // chainId -> String
+                        // ...
+                        let b: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
+
+
+                        let r = serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
+                        ResponsePayload::Success(r.to_owned())
+                    },
+                    Err(e) => {
+                        let b: String = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
+                        let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
+                        let f = alloy_json_rpc::ErrorPayload { code: 666, message: "idk".to_string(), data: Some(r.to_owned()) };
+                        ResponsePayload::Failure(f)
                     }
-                };
-                //log(format!("parsed {:#?}", res).as_str());
-                tx.send(Ok(res)).unwrap()
-            });
-            // and wait for the response
+                }
+            };
+            //log(format!("parsed {:#?}", res).as_str());
+            tx.send(Ok(res)).unwrap()
+        });
+        // and wait for the response
+        let r: Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send>> 
+            = Box::pin(async move {
             let d = rx.await.map_err(|_| TransportErrorKind::backend_gone())?;
             d.map_err(|_| TransportErrorKind::backend_gone())
-        })        
+        });
+        r  
     }
 
-    async fn send_packet(&self, req: RequestPacket) -> Pin<Box<dyn Future<Output = Result<ResponsePacket, TransportError>> + Send>> {
+    fn send_packet(&self, req: RequestPacket) -> Pin<Box<dyn Future<Output = Result<ResponsePacket, TransportError>> + Send>> {
         match req {
             RequestPacket::Single(req) => {
-                let fut: Pin<Box<dyn Future<Output = Result<Response, TransportError>> + Send>> = self.send(req).await;
+                let fut = self.send(req);
                 Box::pin(async move {
                     match fut.await {
                         Ok(d) => Ok(ResponsePacket::Single(d.into())),
@@ -294,11 +290,16 @@ impl WebClient for Eip1193 {
                 })
             }
             RequestPacket::Batch(reqs) => {
-                panic!("unavailable")
-                //let futs = try_join_all(
-                //    reqs.into_iter().map(|req| self.send(req))
-                //);
-                //Box::pin(futs.into())
+               // panic!("unavailable")
+                let futs = try_join_all(
+                    reqs.into_iter().map(|req| self.send(req))
+                );
+                Box::pin(async move {
+                    match futs.await {
+                        Ok(d) => Ok(ResponsePacket::Batch(d.into())),
+                        Err(e) => Err(e)
+                    }
+                })
             }
         }
     } 
@@ -318,7 +319,7 @@ impl tower::Service<RequestPacket> for Eip1193 {
         &mut self,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        /* if self.tx.is_closed() {
+        /* if self.tx.is_closed() {                     // change this to an internal is_connected()
             return std::task::Poll::Ready(Err(TransportErrorKind::backend_gone()));
         } */
         std::task::Poll::Ready(Ok(()))
@@ -326,17 +327,11 @@ impl tower::Service<RequestPacket> for Eip1193 {
 
     #[inline]
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        if let RequestPacket::Single(b) = req {
-            let req = self.nrequest(b);
-            Box::pin(req)       // needs to be ResponsePacket
-            
-        } else { panic!("Shiiiiiiiiiiiit")}
+        self.send_packet(req)
     }
 }
- */
 
- /* 
-impl tower::Service<RequestPacket> for &Frontend {
+impl tower::Service<RequestPacket> for &Eip1193 {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -346,9 +341,9 @@ impl tower::Service<RequestPacket> for &Frontend {
         &mut self,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        if self.tx.is_closed() {
+        /* if self.is_connected() {
             return std::task::Poll::Ready(Err(TransportErrorKind::backend_gone()));
-        }
+        } */
         std::task::Poll::Ready(Ok(()))
     }
 
