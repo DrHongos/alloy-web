@@ -2,10 +2,9 @@ pub mod eip1193;
 pub mod walletconnect;
 pub mod helpers;
 
-//use async_trait::async_trait;
-use eip1193::{Eip1193, Eip1193Error};
+//use alloy_json_rpc::RpcError;
+use eip1193::{Eip1193, Eip1193Error/* , Eip1193Request */};
 use alloy_primitives::{Address, aliases::U256};
-use alloy_rpc_types::Signature;
 use hex::FromHexError;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -19,11 +18,14 @@ use walletconnect_client::{
     WalletConnect,
 };
 
-//use log::debug;
 use walletconnect::WalletConnectProvider;
 use wasm_bindgen::prelude::*;
 
-//use alloy_chains::Chain;
+use alloy_json_rpc::{SerializedRequest, Response};
+use async_trait::async_trait;
+use futures::Future;
+use alloy_transport::{TransportError, TransportErrorKind, TransportFut}; 
+
 
 #[wasm_bindgen]
 extern "C" {
@@ -165,7 +167,7 @@ impl RpcError for EthereumError {
     }
 }
  */
-#[derive(Clone)]
+#[derive(/* Debug,  */Clone)]
 pub enum WebProvider {
     None,
     Injected(Eip1193),
@@ -192,7 +194,6 @@ pub struct Ethereum {
     accounts: Option<Vec<Address>>,
     chain_id: Option<u64>,
     wallet: WebProvider,
-
     listener: Option<UnsafeSendSync<Arc<dyn Fn(Event)>>>,
 }
 
@@ -284,9 +285,9 @@ impl Ethereum {
     }
 
     pub fn disconnect(&mut self) {
-        if let WebProvider::WalletConnect(wc) = &self.wallet {
-            wc.disconnect();
-        }
+        //if let WebProvider::WalletConnect(wc) = &self.wallet {
+        //    wc.disconnect();
+        //}
         self.wallet = WebProvider::None;
         self.accounts = None;
         self.chain_id = None;
@@ -299,7 +300,6 @@ impl Ethereum {
         if !self.injected_available() {
             return Err(EthereumError::Unavailable);
         }
-
         let injected = Eip1193::new();
         self.wallet = WebProvider::Injected(injected.clone());
 
@@ -440,7 +440,7 @@ impl Ethereum {
     }
 }
 
-
+// originally an impl of ethers::JsonRpcClient for Ethereum
 //#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 //#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Ethereum {
@@ -458,22 +458,31 @@ impl Ethereum {
     }
 }
 
-/* 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl JsonRpcClient for Ethereum {
-    type Error = EthereumError;
 
-    async fn request<T: Serialize + Send + Sync, R: DeserializeOwned + Send>(
+/*
+trying to make an rpc client but wasm is not allowing to create the TransportFut depending the wasm response (to Ethereum.request())
+i think the solution could be with a series of channels (see ws::wasm in alloy) 
+
+*/
+
+
+//#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait(?Send)]
+pub trait WebClient {
+    async fn nrequest(&self, req: SerializedRequest) -> std::pin::Pin<Box<dyn Future<Output = Result<Response, alloy_json_rpc::RpcError<TransportErrorKind>>> + Send + 'static>>;
+//    async fn make_request(&self, payload: Eip1193Request) -> Result<String, RpcError<TransportErrorKind>>;
+}
+#[async_trait(?Send)]
+impl WebClient for Ethereum {
+    async fn nrequest(
         &self,
-        method: &str,
-        params: T,
-    ) -> Result<R, Self::Error> {
+        req: SerializedRequest,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Response, alloy_json_rpc::RpcError<TransportErrorKind>>> + Send + 'static>> {
         match &self.wallet {
-            WebProvider::None => Err(EthereumError::NotConnected),
-            WebProvider::Injected(provider) => Ok(provider.request(method, params).await?),
-            WebProvider::WalletConnect(provider) => Ok(provider.request(method, params).await?),
+            WebProvider::None => panic!("Unavailable"),//Err(EthereumError::NotConnected),
+            WebProvider::Injected(provider) => provider.nrequest(req).await,
+            WebProvider::WalletConnect(_provider) => panic!("Unavailable")//Err(EthereumError::Unavailable)//Ok(provider.request(req).await?),
         }
     }
-}
-*/
+}  
+
