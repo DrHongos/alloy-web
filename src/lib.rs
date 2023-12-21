@@ -23,7 +23,7 @@ use wasm_bindgen::prelude::*;
 use alloy_json_rpc::{SerializedRequest, Response, RequestPacket, ResponsePacket};
 use async_trait::async_trait;
 use futures::Future;
-use alloy_transport::{TransportError, TransportErrorKind}; 
+use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportConnect}; 
 use std::pin::Pin;
 
 
@@ -458,14 +458,6 @@ impl Ethereum {
     }
 }
 
-
-/*
-trying to make an rpc client but wasm is not allowing to create the TransportFut depending the wasm response (to Ethereum.request())
-i think the solution could be with a series of channels (see ws::wasm in alloy) 
-
-*/
-
-
 //#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[async_trait(?Send)]
 pub trait WebClient {
@@ -493,3 +485,57 @@ impl WebClient for Ethereum {
     }
 }  
 
+impl tower::Service<RequestPacket> for Ethereum {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    #[inline]
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+/*         if self.tx.is_closed() {
+            return std::task::Poll::Ready(Err(TransportErrorKind::backend_gone()));
+        } */
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    #[inline]
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        self.send_packet(req)
+    }
+}
+
+impl tower::Service<RequestPacket> for &Ethereum {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    #[inline]
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+/*         if self.tx.is_closed() {
+            return std::task::Poll::Ready(Err(TransportErrorKind::backend_gone()));
+        } */
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    #[inline]
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        self.send_packet(req)
+    }
+}
+
+impl TransportConnect for Ethereum {
+    type Transport = Ethereum;
+
+    fn is_local(&self) -> bool {
+        false
+    }
+    fn get_transport<'a: 'b, 'b>(&'a self) -> alloy_transport::Pbf<'b, Self::Transport, TransportError> {
+        Box::pin(async { Ok(self.to_owned()) } )
+    }
+}

@@ -1,32 +1,25 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
 use thiserror::Error;
-use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
 use hex::FromHexError;
+use std::pin::Pin;
+use futures::{Future, future::try_join_all};
+use async_trait::async_trait;
+use serde_json::json;
+
+use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
+use wasm_bindgen_futures::spawn_local;
+
 use alloy_primitives::Address;
+use alloy_json_rpc::{ResponsePayload, RequestPacket, Response, SerializedRequest, ResponsePacket};
+use alloy_transport::{TransportError, TransportErrorKind/* , TransportFut, TransportConnect */};
+//use alloy_rpc_client::ClientBuilder;
+
 use crate::{
     helpers::{serialize, log}, 
-        WebClient, 
-    //    EthereumError
+    WebClient, 
 };
-use std::pin::Pin;
 
-use alloy_json_rpc::{ResponsePayload, RequestPacket, Response, SerializedRequest};
-use alloy_json_rpc::ResponsePacket;
-use futures::{Future, future::{try_join_all, TryJoinAll}};
-use async_trait::async_trait;
-
-//use serde_json::value::RawValue;
-
-use wasm_bindgen_futures::spawn_local;
-use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
-/* 
-use std::sync::{Arc, Mutex};
-use alloy_primitives::U256;
-use futures::future::try_join_all;
-use serde_json::value::RawValue;
-use tokio::sync::{broadcast, mpsc::{self, UnboundedSender}, oneshot};
- */
 #[wasm_bindgen]
 #[derive(Debug, Clone)]
 pub struct Eip1193Request {
@@ -56,13 +49,9 @@ impl Eip1193Request {
 // But wasm itself is a single threaded... something.
 // To avoid problems with Send and Sync, all these parameters are
 // fetched whenever it is needed
-pub struct Eip1193 {/* client: UnsafeSendSync<Arc<Ethereum>> */}
-
-// what if i can't.. so i add
-// client: UnsafeSendSync<Arc<RefCell<Ethereum>>>
+pub struct Eip1193 {}
 
 #[derive(Error, Debug)]
-/// Error thrown when sending an HTTP request
 pub enum Eip1193Error {
     /// Thrown if the request failed
     #[error("JsValue error")]
@@ -103,8 +92,8 @@ extern "C" {
     fn get_provider_js() -> Result<Option<Ethereum>, JsValue>;
 }
 
+//#[async_trait(?Send)]               // this has no effect (?)
 #[wasm_bindgen]
-#[async_trait(?Send)]               // this has no effect (?)
 extern "C" {
     #[derive(Clone, Debug)]
     /// An EIP-1193 provider object. Available by convention at `window.ethereum`
@@ -134,8 +123,6 @@ impl From<JsValue> for Eip1193Error {
         Eip1193Error::JsValueError(format!("{:?}", src))
     }
 }
-
-
 
 impl Eip1193 {
     /// Sends the request via `window.ethereum` in Js
@@ -184,6 +171,7 @@ impl Eip1193 {
         
         let ethereum = Ethereum::default()?;
         let payload = Eip1193Request::new(method.to_string(), parsed_params.into());
+        log(format!("payload is {:#?}", payload).as_str());
         let req = ethereum.request(payload);
         match req.await {
             Ok(r) => Ok(serde_wasm_bindgen::from_value(r).unwrap()),
@@ -207,9 +195,7 @@ impl Eip1193 {
     }
     
     pub fn new() -> Self {
-        Eip1193 {
-/*             client: UnsafeSendSync::new(Arc::new(Ethereum::default().expect("No window.ethereum"))) */
-        }
+        Eip1193 {}
     }
     
     pub fn on(self, event: &str, callback: Box<dyn FnMut(JsValue)>) -> Result<(), Eip1193Error> {
@@ -220,6 +206,13 @@ impl Eip1193 {
         Ok(())
     }
     
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MetamaskError {
+    pub message: String,
+    pub code: u64,
+    pub data: Option<String>,
 }
 
 #[async_trait(?Send)]
@@ -235,32 +228,54 @@ impl WebClient for Eip1193 {
         spawn_local(async move {
             let method = req.method().to_string();
             let ethereum = Ethereum::default().unwrap();
-            let params = serde_wasm_bindgen::to_value(req.params().expect("No params")).unwrap();
+            let params_in = match req.params() {
+                Some(p) => json!(p),
+                None => json!(null)
+            };
+            //log(format!("params are {:#?}", params_in).as_str());
+            let params = serde_wasm_bindgen::to_value(&params_in).unwrap();
+            //log(format!("converted to {:#?}", params).as_str());
             let payload = Eip1193Request::new(method, params);
-            let resu = ethereum.request(payload).await;//.unwrap();
+            //log(format!("send payload is {:#?}", payload).as_str());
+            let resu = ethereum.request(payload).await;
             //log(format!("is {:#?}", resu).as_str());
-            let res = alloy_json_rpc::Response {
+            let res = Response {
                 id: req.id().clone(),
                 payload: match resu {
                     Ok(s) => {
                         // https://docs.rs/wasm-bindgen/latest/wasm_bindgen/struct.JsValue.html
                         // need to parse between JsValue & RawValue or something like it
+                        // this works but its awful! (and does not cover all responses yet)
+                        if s.is_string() {
+                            let vb: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
+                            let r = serde_json::value::to_raw_value(&vb).expect("Error parsing RawValue");
+                            ResponsePayload::Success(r.to_owned())
+                        } else if s.is_array() {
+                            let vb: Vec<String> = serde_wasm_bindgen::from_value(s).expect("error parsing arr");
+                            let r = serde_json::value::to_raw_value(&vb).expect("Error parsing RawValue");
+                            ResponsePayload::Success(r.to_owned())
+                        } else {
+                            let vb: bool = serde_wasm_bindgen::from_value(s).expect("error parsing arr");
+                            let r = serde_json::value::to_raw_value(&vb).expect("Error parsing RawValue");
+                            ResponsePayload::Success(r.to_owned())
+                        }
+                        // this requires more analysis.. 
+                        //let vb = Uint8Array::from(s).to_vec();
+
 /* 
-                        this needs to be open to all kind of request responses...
-
-*/                            
-                        // requestAccounts -> Vec<String>
-                        // chainId -> String
-                        // ...
-                        let b: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
+                        HERE IS THE BIG BOSS NOW..
+                        check out alloy_json_rpc::try_deserialize_ok()
+                        and RpcCalls to see how to deserialize to specific outcomes
 
 
-                        let r = serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
-                        ResponsePayload::Success(r.to_owned())
+*/
                     },
                     Err(e) => {
-                        let b: String = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
-                        let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
+                        // its an object!
+                        let b: MetamaskError = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
+                        log(format!("{:#?}", &b).as_str());
+                        //let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
+                        let r: &RawValue = &serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
                         let f = alloy_json_rpc::ErrorPayload { code: 666, message: "idk".to_string(), data: Some(r.to_owned()) };
                         ResponsePayload::Failure(f)
                     }
@@ -303,53 +318,4 @@ impl WebClient for Eip1193 {
             }
         }
     } 
-
 }
-
-/* 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl tower::Service<RequestPacket> for Eip1193 {
-    type Response = ResponsePacket;
-    type Error = TransportError;
-    type Future = TransportFut<'static>;
-
-    #[inline]
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        /* if self.tx.is_closed() {                     // change this to an internal is_connected()
-            return std::task::Poll::Ready(Err(TransportErrorKind::backend_gone()));
-        } */
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    #[inline]
-    fn call(&mut self, req: RequestPacket) -> Self::Future {
-        self.send_packet(req)
-    }
-}
-
-impl tower::Service<RequestPacket> for &Eip1193 {
-    type Response = ResponsePacket;
-    type Error = TransportError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    #[inline]
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        /* if self.is_connected() {
-            return std::task::Poll::Ready(Err(TransportErrorKind::backend_gone()));
-        } */
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    #[inline]
-    fn call(&mut self, req: RequestPacket) -> Self::Future {
-        self.send_packet(req)
-    }
-}
- */
