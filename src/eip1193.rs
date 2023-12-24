@@ -1,5 +1,6 @@
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::value::RawValue;
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::value::to_raw_value;
+use serde_wasm_bindgen::from_value;
 use thiserror::Error;
 use hex::FromHexError;
 use std::pin::Pin;
@@ -12,11 +13,13 @@ use wasm_bindgen_futures::spawn_local;
 
 use alloy_primitives::Address;
 use alloy_json_rpc::{ResponsePayload, RequestPacket, Response, SerializedRequest, ResponsePacket};
-use alloy_transport::{TransportError, TransportErrorKind/* , TransportFut, TransportConnect */};
-//use alloy_rpc_client::ClientBuilder;
+use alloy_transport::{TransportError, TransportErrorKind};
 
 use crate::{
-    helpers::{serialize, log}, 
+    helpers::{
+        serialize, 
+      log
+    }, 
     WebClient, 
 };
 
@@ -92,7 +95,6 @@ extern "C" {
     fn get_provider_js() -> Result<Option<Ethereum>, JsValue>;
 }
 
-//#[async_trait(?Send)]               // this has no effect (?)
 #[wasm_bindgen]
 extern "C" {
     #[derive(Clone, Debug)]
@@ -131,47 +133,9 @@ impl Eip1193 {
         method: &str,
         params: T,
     ) -> Result<R, Eip1193Error> {
-        let t_params = serde_wasm_bindgen::to_value(&params).unwrap();
-        let typename_object = JsValue::from_str("type");
-        //log(format!("params is {:#?}", t_params).as_str());
-        let parsed_params = if !t_params.is_null() & !t_params.is_undefined() {
-            js_sys::Array::from(&t_params).map(&mut |val, _, _| {   // error undefined is not iterable
-                if let Some(trans) = js_sys::Object::try_from(&val) {
-                    if let Ok(obj_type) = js_sys::Reflect::get(trans, &typename_object) {
-                        if let Some(type_string) = obj_type.as_string() {
-                            let t_copy = trans.clone();
-                            _ = match type_string.as_str() {
-                                "0x01" => js_sys::Reflect::set(
-                                    &t_copy,
-                                    &typename_object,
-                                    &JsValue::from_str("0x1"),
-                                ),
-                                "0x02" => js_sys::Reflect::set(
-                                    &t_copy,
-                                    &typename_object,
-                                    &JsValue::from_str("0x2"),
-                                ),
-                                "0x03" => js_sys::Reflect::set(
-                                    &t_copy,
-                                    &typename_object,
-                                    &JsValue::from_str("0x3"),
-                                ),
-                                _ => Ok(true),
-                            };
-                            return t_copy.into();
-                        }
-                    }
-                }
-
-                val
-            })
-        } else {
-            js_sys::Array::new()
-        };
-        
         let ethereum = Ethereum::default()?;
+        let parsed_params = parse_params(params);        
         let payload = Eip1193Request::new(method.to_string(), parsed_params.into());
-        log(format!("payload is {:#?}", payload).as_str());
         let req = ethereum.request(payload);
         match req.await {
             Ok(r) => Ok(serde_wasm_bindgen::from_value(r).unwrap()),
@@ -208,13 +172,54 @@ impl Eip1193 {
     
 }
 
+// function in ethers-web that idk why is it.. never make it do anything.. anyway, still using it
+pub fn parse_params<T: Serialize + Send + Sync >(params: T) -> js_sys::Array {
+    let t_params = serde_wasm_bindgen::to_value(&params).unwrap();
+    log(format!("pre params {:#?}", t_params).as_str());
+    let typename_object = JsValue::from_str("type");
+    if !t_params.is_null() & !t_params.is_undefined() {
+        js_sys::Array::from(&t_params).map(&mut |val, _, _| {
+            if let Some(trans) = js_sys::Object::try_from(&val) {   // does not detect object..
+                log(format!("Its object {:#?}", trans).as_str());
+                if let Ok(obj_type) = js_sys::Reflect::get(trans, &typename_object) {
+                    if let Some(type_string) = obj_type.as_string() {
+                        let t_copy = trans.clone();
+                        _ = match type_string.as_str() {
+                            "0x01" => js_sys::Reflect::set(
+                                &t_copy,
+                                &typename_object,
+                                &JsValue::from_str("0x1"),
+                            ),
+                            "0x02" => js_sys::Reflect::set(
+                                &t_copy,
+                                &typename_object,
+                                &JsValue::from_str("0x2"),
+                            ),
+                            "0x03" => js_sys::Reflect::set(
+                                &t_copy,
+                                &typename_object,
+                                &JsValue::from_str("0x3"),
+                            ),
+                            _ => Ok(true),
+                        };
+                        return t_copy.into()
+                    }
+                }
+            }
+            val
+        })
+    } else {
+        js_sys::Array::new()
+    }
+}
+/* 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MetamaskError {
     pub message: String,
     pub code: u64,
     pub data: Option<String>,
 }
-
+ */
 #[async_trait(?Send)]
 impl WebClient for Eip1193 {
     // this is working but needs to capture all responses in Box<RawValue> or something closer to alloy_json_rpc::ResponsePacket
@@ -228,55 +233,50 @@ impl WebClient for Eip1193 {
         spawn_local(async move {
             let method = req.method().to_string();
             let ethereum = Ethereum::default().unwrap();
+
             let params_in = match req.params() {
                 Some(p) => json!(p),
                 None => json!(null)
             };
-            //log(format!("params are {:#?}", params_in).as_str());
-            let params = serde_wasm_bindgen::to_value(&params_in).unwrap();
-            //log(format!("converted to {:#?}", params).as_str());
-            let payload = Eip1193Request::new(method, params);
-            //log(format!("send payload is {:#?}", payload).as_str());
+//            log(format!("params in: {:#?}", params_in).as_str());
+
+            // capturing json objects.. ie: wallet_switchEthereumChain
+            let payload = match params_in.is_string() {
+                true => {
+                    let p = serde_wasm_bindgen::to_value(&params_in).unwrap();      // cant find the correct way..
+                    /* 
+                        seems to need to be in an array, but if it is wrapped in it, it says: expected object, obtained array
+                        how to parse the object from the json string                    
+                     */
+                    //log(format!("changed {:#?}", p).as_str());
+                    Eip1193Request::new(method, p)
+                },
+                false => {
+                    let params = parse_params(params_in);
+                    Eip1193Request::new(method, params.into())
+                }
+            };
+            log(format!("send payload is {:#?}", payload).as_str());
+
             let resu = ethereum.request(payload).await;
             //log(format!("is {:#?}", resu).as_str());
             let res = Response {
                 id: req.id().clone(),
                 payload: match resu {
                     Ok(s) => {
-                        // https://docs.rs/wasm-bindgen/latest/wasm_bindgen/struct.JsValue.html
-                        // need to parse between JsValue & RawValue or something like it
-                        // this works but its awful! (and does not cover all responses yet)
-                        if s.is_string() {
-                            let vb: String = serde_wasm_bindgen::from_value(s).expect("Error parsing JsValue");
-                            let r = serde_json::value::to_raw_value(&vb).expect("Error parsing RawValue");
-                            ResponsePayload::Success(r.to_owned())
-                        } else if s.is_array() {
-                            let vb: Vec<String> = serde_wasm_bindgen::from_value(s).expect("error parsing arr");
-                            let r = serde_json::value::to_raw_value(&vb).expect("Error parsing RawValue");
-                            ResponsePayload::Success(r.to_owned())
-                        } else {
-                            let vb: bool = serde_wasm_bindgen::from_value(s).expect("error parsing arr");
-                            let r = serde_json::value::to_raw_value(&vb).expect("Error parsing RawValue");
-                            ResponsePayload::Success(r.to_owned())
-                        }
-                        // this requires more analysis.. 
-                        //let vb = Uint8Array::from(s).to_vec();
-
-/* 
-                        HERE IS THE BIG BOSS NOW..
-                        check out alloy_json_rpc::try_deserialize_ok()
-                        and RpcCalls to see how to deserialize to specific outcomes
-
-
-*/
+                        let json_string: serde_json::Value = from_value(s).unwrap();
+                        let raw_value = to_raw_value(&json_string).expect("Could not serialize RawValue");
+                        ResponsePayload::Success(raw_value.to_owned())
                     },
                     Err(e) => {
-                        // its an object!
-                        let b: MetamaskError = serde_wasm_bindgen::from_value(e).expect("Error parsing JsValue");
-                        log(format!("{:#?}", &b).as_str());
-                        //let r: &RawValue = serde_json::from_slice(b.as_bytes()).expect("Error parsing RawValue");
-                        let r: &RawValue = &serde_json::value::to_raw_value(&b).expect("Error parsing RawValue");
-                        let f = alloy_json_rpc::ErrorPayload { code: 666, message: "idk".to_string(), data: Some(r.to_owned()) };
+
+                        let json_string: serde_json::Value = from_value(e).unwrap();
+                        let raw_value = to_raw_value(&json_string).expect("Could not serialize RawValue");
+                        let f = alloy_json_rpc::ErrorPayload { // fix this
+                            code: 666, 
+                            message: "idk".to_string(), 
+                            data: Some(raw_value) 
+                        };
                         ResponsePayload::Failure(f)
                     }
                 }
