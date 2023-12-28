@@ -7,15 +7,24 @@ keywords = ["crypto", "ethers", "ethereum", "web3", "wasm", "walletconnect"]
 
 [dependencies]
 walletconnect-client = { git = "https://github.com/quay-rs/walletconnect-client" }
+#qrcode-generator = "4.1.9"
 serde = { version = "1.0", features = ["derive", "rc"] }
 thiserror = "1.0"
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.5"
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value"] }
 js-sys = "0.3.64"
 wasm-bindgen-futures = "0.4.37"
 hex = "0.4.3"
-qrcode-generator = "4.1.9"
 unsafe-send-sync = "0.1.0"
 alloy-primitives = "0.5.2"
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy" }
+#alloy-providers = { git = "https://github.com/alloy-rs/alloy" }
+tower = "0.4.13"
+futures = "0.3.29"
+tokio = "1.35.0"
+async-trait = "0.1.74"
+alloy-chains = "0.1.6"

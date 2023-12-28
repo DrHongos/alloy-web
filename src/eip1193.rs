@@ -1,4 +1,7 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{
+//    de::DeserializeOwned, 
+    Serialize,
+};
 use serde_json::value::to_raw_value;
 use serde_wasm_bindgen::from_value;
 use thiserror::Error;
@@ -11,14 +14,14 @@ use serde_json::json;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
-use alloy_primitives::Address;
+//use alloy_primitives::Address;
 use alloy_json_rpc::{ResponsePayload, RequestPacket, Response, SerializedRequest, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind};
 
 use crate::{
     helpers::{
-        serialize, 
-      log
+//        serialize, 
+        log
     }, 
     WebClient, 
 };
@@ -46,12 +49,12 @@ impl Eip1193Request {
         self.params.clone()
     }
 }
-
-#[derive(/* Debug,  */Clone)]
+// old note
 // All attributes this library needs is thread unsafe.
 // But wasm itself is a single threaded... something.
 // To avoid problems with Send and Sync, all these parameters are
 // fetched whenever it is needed
+#[derive(Debug, Clone)]
 pub struct Eip1193 {}
 
 #[derive(Error, Debug)]
@@ -127,6 +130,7 @@ impl From<JsValue> for Eip1193Error {
 }
 
 impl Eip1193 {
+/* 
     /// Sends the request via `window.ethereum` in Js
     pub async fn request<T: Serialize + Send + Sync, R: DeserializeOwned + Send>(
         &self,
@@ -142,8 +146,9 @@ impl Eip1193 {
             Err(e) => Err(e.into()),
         }
     }
-    
-    pub async fn sign_typed_data<T: Send + Sync + Serialize>(
+ */    
+/*
+     pub async fn sign_typed_data<T: Send + Sync + Serialize>(
         &self,
         data: T,
         from: &Address,
@@ -154,6 +159,7 @@ impl Eip1193 {
         let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
         Ok(sig)
     }
+ */
     pub fn is_available() -> bool {
         Ethereum::default().is_ok()
     }
@@ -175,12 +181,12 @@ impl Eip1193 {
 // function in ethers-web that idk why is it.. never make it do anything.. anyway, still using it
 pub fn parse_params<T: Serialize + Send + Sync >(params: T) -> js_sys::Array {
     let t_params = serde_wasm_bindgen::to_value(&params).unwrap();
-    log(format!("pre params {:#?}", t_params).as_str());
+//    log(format!("pre params {:#?}", t_params).as_str());
     let typename_object = JsValue::from_str("type");
     if !t_params.is_null() & !t_params.is_undefined() {
         js_sys::Array::from(&t_params).map(&mut |val, _, _| {
             if let Some(trans) = js_sys::Object::try_from(&val) {   // does not detect object..
-                log(format!("Its object {:#?}", trans).as_str());
+//                log(format!("Its object {:#?}", trans).as_str());
                 if let Ok(obj_type) = js_sys::Reflect::get(trans, &typename_object) {
                     if let Some(type_string) = obj_type.as_string() {
                         let t_copy = trans.clone();
@@ -212,17 +218,9 @@ pub fn parse_params<T: Serialize + Send + Sync >(params: T) -> js_sys::Array {
         js_sys::Array::new()
     }
 }
-/* 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct MetamaskError {
-    pub message: String,
-    pub code: u64,
-    pub data: Option<String>,
-}
- */
+
 #[async_trait(?Send)]
 impl WebClient for Eip1193 {
-    // this is working but needs to capture all responses in Box<RawValue> or something closer to alloy_json_rpc::ResponsePacket
     fn send(
         &self,
         req: SerializedRequest,
@@ -256,7 +254,7 @@ impl WebClient for Eip1193 {
                     Eip1193Request::new(method, params.into())
                 }
             };
-            log(format!("send payload is {:#?}", payload).as_str());
+            log(format!("sent payload is {:#?}", payload).as_str());
 
             let resu = ethereum.request(payload).await;
             //log(format!("is {:#?}", resu).as_str());
@@ -272,9 +270,9 @@ impl WebClient for Eip1193 {
 
                         let json_string: serde_json::Value = from_value(e).unwrap();
                         let raw_value = to_raw_value(&json_string).expect("Could not serialize RawValue");
-                        let f = alloy_json_rpc::ErrorPayload { // fix this
+                        let f = alloy_json_rpc::ErrorPayload { // fix this (use get()?)
                             code: 666, 
-                            message: "idk".to_string(), 
+                            message: "need to parse JsValue into this".to_string(), 
                             data: Some(raw_value) 
                         };
                         ResponsePayload::Failure(f)
@@ -305,7 +303,6 @@ impl WebClient for Eip1193 {
                 })
             }
             RequestPacket::Batch(reqs) => {
-               // panic!("unavailable")
                 let futs = try_join_all(
                     reqs.into_iter().map(|req| self.send(req))
                 );
