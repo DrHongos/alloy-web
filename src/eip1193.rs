@@ -14,15 +14,11 @@ use serde_json::json;
 use wasm_bindgen::{closure::Closure, prelude::*, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
-//use alloy_primitives::Address;
 use alloy_json_rpc::{ResponsePayload, RequestPacket, Response, SerializedRequest, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind};
 
 use crate::{
-    helpers::{
-//        serialize, 
-        log
-    }, 
+//    helpers::{serialize, log}, 
     WebClient, 
 };
 
@@ -254,7 +250,7 @@ impl WebClient for Eip1193 {
                     Eip1193Request::new(method, params.into())
                 }
             };
-            log(format!("sent payload is {:#?}", payload).as_str());
+            //log(format!("sent payload is {:#?}", payload).as_str());
 
             let resu = ethereum.request(payload).await;
             //log(format!("is {:#?}", resu).as_str());
