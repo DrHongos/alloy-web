@@ -94,6 +94,18 @@ extern "C" {
     fn get_provider_js() -> Result<Option<Ethereum>, JsValue>;
 }
 
+// testing to persist connected wallet
+#[wasm_bindgen(inline_js = "export function get_accounts_js() {
+    return window.ethereum.request({
+        'method': 'eth_accounts',
+        'params': []
+    })
+}" )]
+extern "C" {
+    #[wasm_bindgen(catch)]
+    async fn get_accounts_js() -> Result<JsValue, JsValue>;
+}
+
 #[wasm_bindgen]
 extern "C" {
     #[derive(Clone, Debug)]
@@ -117,6 +129,17 @@ impl Ethereum {
             return Err(Eip1193Error::JsNoEthereum);
         }
     }
+/* 
+    pub async fn get_accounts() -> Vec<String> {
+        match get_accounts_js().await {
+            Ok(d) => {
+                //crate::helpers::log(format!("Enters: {:#?}", d).as_str());
+                let v: Vec<String> = from_value(d).unwrap();
+                v
+            },
+            Err(_e) => Vec::new()//JsValue::NULL
+        }
+    } */
 }
 
 impl From<JsValue> for Eip1193Error {
@@ -126,36 +149,6 @@ impl From<JsValue> for Eip1193Error {
 }
 
 impl Eip1193 {
-/* 
-    /// Sends the request via `window.ethereum` in Js
-    pub async fn request<T: Serialize + Send + Sync, R: DeserializeOwned + Send>(
-        &self,
-        method: &str,
-        params: T,
-    ) -> Result<R, Eip1193Error> {
-        let ethereum = Ethereum::default()?;
-        let parsed_params = parse_params(params);        
-        let payload = Eip1193Request::new(method.to_string(), parsed_params.into());
-        let req = ethereum.request(payload);
-        match req.await {
-            Ok(r) => Ok(serde_wasm_bindgen::from_value(r).unwrap()),
-            Err(e) => Err(e.into()),
-        }
-    }
- */    
-/*
-     pub async fn sign_typed_data<T: Send + Sync + Serialize>(
-        &self,
-        data: T,
-        from: &Address,
-    ) -> Result<String, Eip1193Error> {
-        let data = serialize(&data);
-        let from = serialize(&from.to_string());
-
-        let sig: String = self.request("eth_signTypedData_v4", [from, data]).await?;
-        Ok(sig)
-    }
- */
     pub fn is_available() -> bool {
         Ethereum::default().is_ok()
     }
