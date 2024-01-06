@@ -34,19 +34,27 @@ pub struct Provider<T: Transport = BoxTransport> {
     pub chain: Chain,
 }
 impl Provider<BrowserTransport> {
-    pub async fn new(eth: BrowserTransport) -> Self {
+    pub async fn new(eth: BrowserTransport) -> Option<Self> {
         let client = ClientBuilder::default()
             .connect(eth).await.expect("cannot create client");        
         let aclient = Arc::new(client);
         //let bclient = aclient.clone();
         //crate::helpers::log(format!("{:#?}", aclient).as_str());
-        let accounts: Vec<Address> = aclient.clone().prepare("eth_requestAccounts", Cow::<()>::Owned(())).await.expect("Could not get accounts");
-        let chain_id_r: U64 = aclient.clone().prepare("eth_chainId", Cow::<()>::Owned(())).await.expect("Could not get chain id");
-        let chain_id: u64 = chain_id_r.try_into().unwrap_or(1);
-        Self {
-            inner: aclient,
-            from: accounts,
-            chain: Chain::from_id(chain_id)
+        let accounts: Vec<Address> = aclient
+            .clone()
+            .prepare("eth_requestAccounts", Cow::<()>::Owned(()))
+            .await
+            .unwrap_or(Vec::new());
+        if accounts.len() > 0 {
+            let chain_id_r: U64 = aclient.clone().prepare("eth_chainId", Cow::<()>::Owned(())).await.expect("Could not get chain id");
+            let chain_id: u64 = chain_id_r.try_into().unwrap_or(1);
+            Some(Self {
+                inner: aclient,
+                from: accounts,
+                chain: Chain::from_id(chain_id)
+            })
+        } else {
+            None
         }
     }
     pub async fn resume() -> Result<Option<Self>, JsValue> {
