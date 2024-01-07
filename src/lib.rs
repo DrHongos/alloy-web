@@ -162,14 +162,16 @@ impl BrowserTransport {
         }
     }
 
+    pub fn set_listeners(&mut self, listener: Arc<dyn Fn(Event)>) {
+        self.listener = Some(UnsafeSendSync::new(listener));
+        log("listeners setted");
+    }
+
     pub fn disconnect(&mut self) {
         //if let WebProvider::WalletConnect(wc) = &self.wallet {
         //    wc.disconnect();
         //}
         self.wallet = WebProvider::None;
-        //self.accounts = None;
-        //self.chain_id = None;
-
         self.emit_event(Event::ChainIdChanged(None));
         self.emit_event(Event::AccountsChanged(None));
     }

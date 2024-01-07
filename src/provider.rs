@@ -2,8 +2,10 @@ use alloy_transport::{Transport, BoxTransport, TransportResult};
 use alloy_primitives::{Address, U64, U256, BlockHash, Bytes, TxHash};
 use std::sync::Arc;
 use alloy_rpc_client::{RpcClient, ClientBuilder};
+//use crate::helpers::log;
+use crate::WalletType;
+use crate::Event;
 use super::BrowserTransport;
-use alloy_chains::Chain;
 use std::{
     borrow::Cow,
     fmt::{Debug, Formatter, Result as FmtResult},
@@ -25,62 +27,61 @@ extern "C" {
     #[wasm_bindgen(catch)]
     async fn get_accounts_js() -> Result<JsValue, JsValue>;
 }
+
 // copied from alloy idea..
-// como actualizar los campos from & chain desde eventos? testear!
 #[derive(Clone)]
 pub struct Provider<T: Transport = BoxTransport> {
     inner: Arc<RpcClient<T>>,
-    pub from: Vec<Address>,
-    pub chain: Chain,
 }
+
 impl Provider<BrowserTransport> {
-    pub async fn new(eth: BrowserTransport) -> Option<Self> {
+    pub async fn new(wallet_type: WalletType, listeners:Option<Arc<dyn Fn(Event)>> ) -> Option<Self> {
+        
+        let mut bt = BrowserTransport::new();
+        bt.connect(
+            wallet_type,
+            listeners
+        ).await.expect("Cannot connect to browser transport");
+
         let client = ClientBuilder::default()
-            .connect(eth).await.expect("cannot create client");        
+            .connect(bt.clone())
+            .await
+            .expect("cannot create client");        
         let aclient = Arc::new(client);
-        //let bclient = aclient.clone();
-        //crate::helpers::log(format!("{:#?}", aclient).as_str());
+
         let accounts: Vec<Address> = aclient
             .clone()
             .prepare("eth_requestAccounts", Cow::<()>::Owned(()))
             .await
             .unwrap_or(Vec::new());
         if accounts.len() > 0 {
-            let chain_id_r: U64 = aclient.clone().prepare("eth_chainId", Cow::<()>::Owned(())).await.expect("Could not get chain id");
-            let chain_id: u64 = chain_id_r.try_into().unwrap_or(1);
-            Some(Self {
+            let pre_provider = Self {
                 inner: aclient,
-                from: accounts,
-                chain: Chain::from_id(chain_id)
-            })
+            };
+            
+            Some(pre_provider)
         } else {
             None
         }
     }
-    pub async fn resume() -> Result<Option<Self>, JsValue> {
+
+    // returns if the wallet is connected, used for persistence check
+    pub async fn resume() -> Result<bool, JsValue> {
         match get_accounts_js().await {
             Ok(d) => {
                 let v: Vec<Address> = serde_wasm_bindgen::from_value(d).unwrap();
-                //crate::helpers::log(format!("eth_accounts {:?}", v).as_str());
                 if v.len() > 0 {
-                    let bt = BrowserTransport::new();
-                    let cl = ClientBuilder::default().connect(bt).await.expect("rpc client error");
-                    //let chain_id = re connect chain
-                    Ok(Some(Self {
-                        inner: Arc::new(cl),
-                        from: v,
-                        chain: Chain::mainnet()
-                    }))
+                    Ok(true)
                 } else {
-                    Ok(None)
+                    Ok(false)
                 }
             },
             Err(e) => {
-                crate::helpers::log(format!("Booo {:#?}", e).as_str());
                 Err(e)
             }
         }
     }
+
     // mostly copied fns from alloy_provider
     pub async fn get_transaction_count(
         &self,
@@ -297,8 +298,7 @@ impl Debug for Provider<BrowserTransport> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "Ethereum browser provider with accounts {:?} connected in chain {:?}",
-            self.from, self.chain,
+            "Ethereum browser provider with accounts"
         )
     }
 }
