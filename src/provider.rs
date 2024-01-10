@@ -1,28 +1,29 @@
 use alloy_transport::{Transport, BoxTransport, TransportResult}; 
 use alloy_primitives::{Address, U64, U256, BlockHash, Bytes, TxHash};
-use std::sync::Arc;
-use alloy_rpc_client::{RpcClient, ClientBuilder};
-//use crate::helpers::log;
-use crate::WalletType;
-use crate::Event;
-use super::BrowserTransport;
-use std::{
-    borrow::Cow,
-    fmt::{Debug, Formatter, Result as FmtResult},
-};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, 
     Block, FeeHistory, Filter, Log, RpcBlockHash, SyncStatus,
-    Transaction, TransactionReceipt, TransactionRequest,
+    Transaction, TransactionReceipt, /* TransactionRequest, */ CallRequest, TransactionRequest,
+};
+use alloy_rpc_client::{RpcClient, ClientBuilder};
+
+use crate::{WalletType, Event};
+use super::BrowserTransport;
+use std::{
+    sync::Arc,
+    borrow::Cow,
+    fmt::{Debug, Formatter, Result as FmtResult},
 };
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(inline_js = "export function get_accounts_js() {
-    return window.ethereum.request({
-        'method': 'eth_accounts',
-        'params': []
-    })
-}" )]
+#[wasm_bindgen(inline_js = 
+    "export function get_accounts_js() {
+        return window.ethereum.request({
+            'method': 'eth_accounts',
+            'params': []
+        })
+    }" 
+)]
 extern "C" {
     #[wasm_bindgen(catch)]
     async fn get_accounts_js() -> Result<JsValue, JsValue>;
@@ -35,8 +36,7 @@ pub struct Provider<T: Transport = BoxTransport> {
 }
 
 impl Provider<BrowserTransport> {
-    pub async fn new(wallet_type: WalletType, listeners:Option<Arc<dyn Fn(Event)>> ) -> Option<Self> {
-        
+    pub async fn new(wallet_type: WalletType, listeners:Option<Arc<dyn Fn(Event)>> ) -> Option<Self> {  // its maybe a Result<Self, CustomError>
         let mut bt = BrowserTransport::new();
         bt.connect(
             wallet_type,
@@ -44,7 +44,7 @@ impl Provider<BrowserTransport> {
         ).await.expect("Cannot connect to browser transport");
 
         let client = ClientBuilder::default()
-            .connect(bt.clone())
+            .connect(bt)
             .await
             .expect("cannot create client");        
         let aclient = Arc::new(client);
@@ -55,11 +55,10 @@ impl Provider<BrowserTransport> {
             .await
             .unwrap_or(Vec::new());
         if accounts.len() > 0 {
-            let pre_provider = Self {
+            let provider = Self {
                 inner: aclient,
             };
-            
-            Some(pre_provider)
+            Some(provider)
         } else {
             None
         }
@@ -258,31 +257,35 @@ impl Provider<BrowserTransport> {
     /// Execute a smart contract call with [TransactionRequest] without publishing a transaction.
     pub async fn call(
         &self,
-        tx: TransactionRequest,
+        tx: CallRequest,
         block: Option<BlockId>,
     ) -> TransportResult<Bytes> {
+        let p = Cow::<(CallRequest, BlockId)>::Owned((
+            tx,
+            block.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest)),
+        ));
+        let t = self.inner.make_request("eth_call", p.clone());
+       // let tt = serde_json::to_value(t).expect("Failed to serialize value");
+        crate::helpers::log(format!("Request: {:#?}", t).as_str());
+
         self.inner
             .prepare(
                 "eth_call",
-                Cow::<(TransactionRequest, BlockId)>::Owned((
-                    tx,
-                    block.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest)),
-                )),
-            )
-            .await
+                p
+            ).await
     }
 
     /// Estimate the gas needed for a transaction.
     pub async fn estimate_gas(
         &self,
-        tx: TransactionRequest,
+        tx: CallRequest,
         block: Option<BlockId>,
     ) -> TransportResult<Bytes> {
         if let Some(block_id) = block {
-            let params = Cow::<(TransactionRequest, BlockId)>::Owned((tx, block_id));
+            let params = Cow::<(CallRequest, BlockId)>::Owned((tx, block_id));
             self.inner.prepare("eth_estimateGas", params).await
         } else {
-            let params = Cow::<TransactionRequest>::Owned(tx);
+            let params = Cow::<CallRequest>::Owned(tx);
             self.inner.prepare("eth_estimateGas", params).await
         }
     }
@@ -290,6 +293,11 @@ impl Provider<BrowserTransport> {
     /// Sends an already-signed transaction.
     pub async fn send_raw_transaction(&self, tx: Bytes) -> TransportResult<TxHash> {
         self.inner.prepare("eth_sendRawTransaction", Cow::<Bytes>::Owned(tx)).await
+    }
+
+    // add send_transaction (https://docs.metamask.io/wallet/reference/eth_sendtransaction/)
+    pub async fn send_transaction(&self, tx: TransactionRequest) -> TransportResult<Bytes> {
+        self.inner.prepare("eth_sendTransaction", Cow::<TransactionRequest>::Owned(tx)).await
     }
    
 }
