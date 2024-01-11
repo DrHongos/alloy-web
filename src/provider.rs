@@ -5,7 +5,7 @@ use alloy_rpc_types::{
     Block, FeeHistory, Filter, Log, RpcBlockHash, SyncStatus,
     Transaction, TransactionReceipt, /* TransactionRequest, */ CallRequest, TransactionRequest,
 };
-use alloy_rpc_client::{RpcClient, ClientBuilder};
+use alloy_rpc_client::{RpcClient, ClientBuilder, RpcCall};
 
 use crate::{WalletType, Event};
 use super::BrowserTransport;
@@ -29,7 +29,7 @@ extern "C" {
     async fn get_accounts_js() -> Result<JsValue, JsValue>;
 }
 
-// copied from alloy idea..
+// copied from alloy idea.. (avoided internal status (accounts, chain) in favour of local storage (assuming context))
 #[derive(Clone)]
 pub struct Provider<T: Transport = BoxTransport> {
     inner: Arc<RpcClient<T>>,
@@ -253,26 +253,17 @@ impl Provider<BrowserTransport> {
     pub async fn syncing(&self) -> TransportResult<SyncStatus> {
         self.inner.prepare("eth_syncing", Cow::<()>::Owned(())).await
     }
-
+    
     /// Execute a smart contract call with [TransactionRequest] without publishing a transaction.
     pub async fn call(
         &self,
         tx: CallRequest,
         block: Option<BlockId>,
     ) -> TransportResult<Bytes> {
-        let p = Cow::<(CallRequest, BlockId)>::Owned((
-            tx,
-            block.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest)),
-        ));
-        let t = self.inner.make_request("eth_call", p.clone());
-       // let tt = serde_json::to_value(t).expect("Failed to serialize value");
-        crate::helpers::log(format!("Request: {:#?}", t).as_str());
-
-        self.inner
-            .prepare(
-                "eth_call",
-                p
-            ).await
+        let req: RpcCall<_, Cow<(CallRequest, BlockId)>, Bytes> = self
+            .inner()
+            .prepare("eth_call", Cow::Owned((tx, block.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest)))));
+        req.await
     }
 
     /// Estimate the gas needed for a transaction.
@@ -297,7 +288,10 @@ impl Provider<BrowserTransport> {
 
     // add send_transaction (https://docs.metamask.io/wallet/reference/eth_sendtransaction/)
     pub async fn send_transaction(&self, tx: TransactionRequest) -> TransportResult<Bytes> {
-        self.inner.prepare("eth_sendTransaction", Cow::<TransactionRequest>::Owned(tx)).await
+        // try removing nonce, type and accessList args
+        let params: Cow<'static, TransactionRequest> = Cow::Owned(tx);
+        
+        self.inner.prepare("eth_sendTransaction", vec![params]).await
     }
    
 }
